@@ -86,6 +86,49 @@ router.get('/cortes-reconexiones', (req, res) => {
   );
 });
 
+// POST para insertar una reconexión
+router.post('/', (req, res) => {
+  const { id_cuenta, id_medidor, fecha } = req.body;
+  if (!id_cuenta || !id_medidor || !fecha)
+    return res.status(400).json({ error: 'Datos incompletos' });
+  db.query(
+    'INSERT INTO reconexiones (id_cuenta, id_medidor, fecha) VALUES (?, ?, ?)',
+    [id_cuenta, id_medidor, fecha],
+    (err, result) => {
+      if (err) return res.status(500).json({ error: err.message });
+      res.json({ ok: true, id: result.insertId });
+    }
+  );
+});
+
+// PUT para editar una reconexión
+router.put('/', (req, res) => {
+  const {
+    original_cuenta,
+    original_medidor,
+    original_fecha,
+    id_cuenta,
+    id_medidor,
+    fecha
+  } = req.body;
+
+  if (!original_cuenta || !original_medidor || !original_fecha ||
+      !id_cuenta || !id_medidor || !fecha) {
+    return res.status(400).json({ error: 'Datos incompletos para editar' });
+  }
+
+  db.query(
+    `UPDATE reconexiones
+     SET id_cuenta = ?, id_medidor = ?, fecha = ?
+     WHERE id_cuenta = ? AND id_medidor = ? AND fecha = ?`,
+    [id_cuenta, id_medidor, fecha, original_cuenta, original_medidor, original_fecha],
+    (err, result) => {
+      if (err) return res.status(500).json({ error: err.message });
+      res.json({ ok: true, changedRows: result.changedRows });
+    }
+  );
+});
+
 // Elimina todas las reconexiones
 router.delete('/reconexiones', (req, res) => {
   db.query('DELETE FROM reconexiones', (err, result) => {

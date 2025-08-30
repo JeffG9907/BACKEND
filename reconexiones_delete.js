@@ -1,6 +1,6 @@
 const axios = require('axios');
 
-const API_URL = 'https://backend-apiemail.up.railway.app/api/reconexiones';
+const API_URL = 'https://backend-apiemail.up.railway.app/api/reconexiones/reconexiones';
 
 (async () => {
   try {
