@@ -147,6 +147,24 @@ router.put('/', (req, res) => {
   );
 });
 
+// DELETE una reconexión
+router.delete('/', (req, res) => {
+  const { id_cuenta, id_medidor, fecha } = req.body;
+  if (!id_cuenta || !id_medidor || !fecha)
+    return res.status(400).json({ error: 'Datos incompletos para eliminar' });
+  db.query(
+    'DELETE FROM reconexiones WHERE id_cuenta = ? AND id_medidor = ? AND fecha = ?',
+    [id_cuenta, id_medidor, fecha],
+    (err, result) => {
+      if (err) {
+        console.error('Error al eliminar reconexión:', err);
+        return res.status(500).json({ error: err.message });
+      }
+      res.json({ ok: true, affectedRows: result.affectedRows });
+    }
+  );
+});
+
 // Elimina todas las reconexiones
 router.delete('/reconexiones', (req, res) => {
   db.query('DELETE FROM reconexiones', (err, result) => {
