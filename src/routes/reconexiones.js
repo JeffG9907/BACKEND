@@ -86,4 +86,15 @@ router.get('/cortes-reconexiones', (req, res) => {
   );
 });
 
+// Elimina todas las reconexiones
+router.delete('/reconexiones', (req, res) => {
+  db.query('DELETE FROM reconexiones', (err, result) => {
+    if (err) {
+      console.error('Error al eliminar reconexiones:', err);
+      return res.status(500).json({ error: 'Error al eliminar reconexiones', details: err.message });
+    }
+    res.json({ message: 'Todas las reconexiones han sido eliminadas', affectedRows: result.affectedRows });
+  });
+});
+
 module.exports = router;
