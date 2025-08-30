@@ -2,6 +2,21 @@ const express = require('express');
 const router = express.Router();
 const db = require('../config/db');
 
+// GET todas las reconexiones o filtrar por fecha
+router.get('/', (req, res) => {
+  const { fecha } = req.query;
+  let sql = 'SELECT * FROM reconexiones';
+  let params = [];
+  if (fecha) {
+    sql += ' WHERE fecha = ?';
+    params.push(fecha);
+  }
+  db.query(sql, params, (err, rows) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json(rows);
+  });
+});
+
 // GET cortes y reconexiones por rango de fechas (YYYY-MM-DD)
 router.get('/cortes-reconexiones', (req, res) => {
   const { start, end } = req.query;
