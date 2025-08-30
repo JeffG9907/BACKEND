@@ -2,14 +2,19 @@ const express = require('express');
 const router = express.Router();
 const db = require('../config/db');
 
-// GET todas las reconexiones o filtrar por fecha
+// GET todas las reconexiones o filtrar por fecha o rango
 router.get('/', (req, res) => {
-  const { fecha } = req.query;
+  const { fecha, start, end } = req.query;
   let sql = 'SELECT * FROM reconexiones';
   let params = [];
   if (fecha) {
     sql += ' WHERE fecha = ?';
     params.push(fecha);
+  } else if (start && end) {
+    sql += ' WHERE fecha BETWEEN ? AND ? ORDER BY fecha ASC, id_cuenta ASC';
+    params.push(start, end);
+  } else {
+    sql += ' ORDER BY fecha ASC, id_cuenta ASC';
   }
   db.query(sql, params, (err, rows) => {
     if (err) return res.status(500).json({ error: err.message });
@@ -53,7 +58,6 @@ router.get('/cortes-reconexiones', (req, res) => {
           // Indexar reconexiones por fecha
           const reconexionesMap = {};
           (Array.isArray(reconexionesRows) ? reconexionesRows : []).forEach(r => {
-            // Asegura que la fecha es string
             let fechaStr = r.fecha;
             if (fechaStr instanceof Date) {
               fechaStr = fechaStr.toISOString().slice(0, 10);
@@ -63,7 +67,6 @@ router.get('/cortes-reconexiones', (req, res) => {
 
           // Unir ambos resultados por fecha
           const result = (Array.isArray(cortesRows) ? cortesRows : []).map(c => {
-            // Asegura que la fecha es string
             let fechaStr = c.fecha;
             if (fechaStr instanceof Date) {
               fechaStr = fechaStr.toISOString().slice(0, 10);
@@ -91,8 +94,8 @@ router.get('/cortes-reconexiones', (req, res) => {
             }
           });
 
-          // Ordenar por fecha ascendente (convertir a string siempre)
-          result.sort((a, b) => String(a.fecha).localeCompare(String(b.fecha)));
+          // Ordenar por fecha ascendente
+          result.sort((a, b) => new Date(a.fecha) - new Date(b.fecha));
 
           res.json(result);
         }
