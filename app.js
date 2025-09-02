@@ -7,14 +7,12 @@ const cortesRoutes = require('./src/routes/cortes');
 const reconexionesRouter = require('./src/routes/reconexiones');
 const incidenciasRouter = require('./src/routes/incidencias');
 const reportesRouter = require('./src/routes/reportes');
-const usuariosRoutes = require('./src/routes/users')
+const usuariosRoutes = require('./src/routes/users');
 
 const app = express();
 
 app.use(cors());
 app.use(express.json());
-app.use('/uploads', express.static('uploads'));
-
 
 app.use('/api', authRoutes);
 app.use('/api/dashboard', dashboardRoutes);
