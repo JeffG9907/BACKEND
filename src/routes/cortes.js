@@ -3,11 +3,16 @@ const router = express.Router();
 const db = require('../config/db');
 const multer = require('multer');
 const path = require('path');
+const fs = require('fs');
+
+// Asegura la carpeta de uploads existe
+const uploadPath = "uploads/cortes/";
+if (!fs.existsSync(uploadPath)) fs.mkdirSync(uploadPath, { recursive: true });
 
 // Configuración de multer para guardar imágenes
 const storage = multer.diskStorage({
   destination: function (req, file, cb) {
-    cb(null, 'uploads/cortes'); // Carpeta donde se guardan imágenes
+    cb(null, uploadPath);
   },
   filename: function (req, file, cb) {
     cb(null, Date.now() + '-' + file.originalname.replace(/\s/g, '_'));
@@ -82,45 +87,78 @@ router.post('/', upload.single('imagen'), (req, res) => {
   );
 });
 
-// PUT editar corte
+// PUT editar corte (actualiza imagen, elimina la anterior si existe)
 router.put('/:id', upload.single('imagen'), (req, res) => {
   const { id } = req.params;
   const { id_cuenta, id_medidor, fecha, localizacion } = req.body;
-  let imagen = req.file ? req.file.path : req.body.imagen || null;
+  // 1. Consulta corte actual para posible imagen antigua
+  db.query('SELECT imagen FROM cortes WHERE id_cuenta=?', [id], (err, [corte]) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!corte) return res.status(404).json({ error: "Corte no encontrado." });
 
-  db.query(
-    'UPDATE cortes SET id_medidor=?, fecha=?, localizacion=?, imagen=? WHERE id_cuenta=?',
-    [id_medidor, fecha, localizacion || null, imagen, id],
-    (err, result) => {
-      if (err) {
-        console.error('Error en PUT /cortes:', err);
-        return res.status(500).json({ error: err.message });
+    let imagen = corte.imagen;
+    let nuevaImagenSubida = false;
+
+    // Si hay imagen nueva, borra la anterior y actualiza a la nueva
+    if (req.file) {
+      if (imagen && fs.existsSync(imagen)) {
+        try { fs.unlinkSync(imagen); } catch {}
       }
-      res.json({ ok: true });
+      imagen = req.file.path;
+      nuevaImagenSubida = true;
+    } else if (req.body.imagen === "") {
+      // Si se manda imagen vacía, elimina la imagen actual
+      if (imagen && fs.existsSync(imagen)) {
+        try { fs.unlinkSync(imagen); } catch {}
+      }
+      imagen = null;
     }
-  );
-});
 
-// DELETE eliminar corte por id_cuenta
-router.delete('/:id', (req, res) => {
-  const { id } = req.params;
-  db.query('DELETE FROM cortes WHERE id_cuenta=?', [id], (err, result) => {
-    if (err) {
-      console.error('Error en DELETE /cortes:', err);
-      return res.status(500).json({ error: err.message });
-    }
-    res.json({ ok: true });
+    db.query(
+      'UPDATE cortes SET id_medidor=?, fecha=?, localizacion=?, imagen=? WHERE id_cuenta=?',
+      [id_medidor, fecha, localizacion || null, imagen, id],
+      (err2, result) => {
+        if (err2) return res.status(500).json({ error: err2.message });
+        res.json({ ok: true, imagen, nuevaImagenSubida });
+      }
+    );
   });
 });
 
-// DELETE eliminar TODOS los cortes
-router.delete('/', (req, res) => {
-  db.query('DELETE FROM cortes', (err, result) => {
-    if (err) {
-      console.error('Error en DELETE /cortes (todos):', err);
-      return res.status(500).json({ error: err.message });
+// DELETE eliminar corte por id_cuenta (borra imagen física)
+router.delete('/:id', (req, res) => {
+  const { id } = req.params;
+  db.query('SELECT imagen FROM cortes WHERE id_cuenta=?', [id], (err, [corte]) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!corte) return res.status(404).json({ error: "Corte no encontrado." });
+
+    // Eliminar física la imagen del disco si existe
+    if (corte.imagen) {
+      if (fs.existsSync(corte.imagen)) {
+        try { fs.unlinkSync(corte.imagen); } catch (e) { /* ignora error */ }
+      }
     }
-    res.json({ ok: true, message: 'Todos los cortes eliminados.' });
+
+    db.query('DELETE FROM cortes WHERE id_cuenta=?', [id], (err2, result) => {
+      if (err2) return res.status(500).json({ error: err2.message });
+      res.json({ ok: true });
+    });
+  });
+});
+
+// DELETE eliminar TODOS los cortes (borra imágenes físicas)
+router.delete('/', (req, res) => {
+  db.query('SELECT imagen FROM cortes', (err, results) => {
+    if (err) return res.status(500).json({ error: err.message });
+    results.forEach(corte => {
+      if (corte.imagen && fs.existsSync(corte.imagen)) {
+        try { fs.unlinkSync(corte.imagen); } catch (e) { /* ignora error */ }
+      }
+    });
+    db.query('DELETE FROM cortes', (err2, result) => {
+      if (err2) return res.status(500).json({ error: err2.message });
+      res.json({ ok: true, message: 'Todos los cortes eliminados.' });
+    });
   });
 });
 
