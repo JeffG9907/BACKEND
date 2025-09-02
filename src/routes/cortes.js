@@ -1,22 +1,25 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../config/db');
+const { v2: cloudinary } = require('cloudinary');
+const { CloudinaryStorage } = require('multer-storage-cloudinary');
 const multer = require('multer');
-const path = require('path');
-const fs = require('fs');
 
-// Asegura la carpeta de uploads existe
-const uploadPath = "uploads/cortes/";
-if (!fs.existsSync(uploadPath)) fs.mkdirSync(uploadPath, { recursive: true });
+// Configuración Cloudinary (pon tus credenciales)
+cloudinary.config({
+  cloud_name: 'TU_CLOUD_NAME',      // <--- pon tu cloud_name aquí
+  api_key: 'TU_API_KEY',            // <--- pon tu api_key aquí
+  api_secret: 'TU_API_SECRET'       // <--- pon tu api_secret aquí
+});
 
-// Configuración de multer para guardar imágenes
-const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    cb(null, uploadPath);
+// Configuración de Multer para guardar imágenes en Cloudinary
+const storage = new CloudinaryStorage({
+  cloudinary: cloudinary,
+  params: {
+    folder: 'siscorte/cortes',
+    allowed_formats: ['jpg', 'jpeg', 'png', 'webp'],
+    public_id: (req, file) => Date.now() + '-' + file.originalname.replace(/\s/g, '_')
   },
-  filename: function (req, file, cb) {
-    cb(null, Date.now() + '-' + file.originalname.replace(/\s/g, '_'));
-  }
 });
 const upload = multer({ storage });
 
@@ -37,11 +40,7 @@ router.get('/', (req, res) => {
       console.error('Error en GET /cortes:', err);
       return res.status(500).json({ error: err.message });
     }
-    results.forEach(c => {
-      if (c.imagen) {
-        c.imagen = `${req.protocol}://${req.get('host')}/uploads/cortes/${path.basename(c.imagen)}`;
-      }
-    });
+    // Las URLs de imagen ya serán públicas por Cloudinary
     res.json(Array.isArray(results) ? results : []);
   });
 });
@@ -57,20 +56,15 @@ router.get('/cuenta/:id', (req, res) => {
         console.error('Error en GET /cortes/cuenta/:id:', err);
         return res.status(500).json({ error: err.message });
       }
-      results.forEach(c => {
-        if (c.imagen) {
-          c.imagen = `${req.protocol}://${req.get('host')}/uploads/cortes/${path.basename(c.imagen)}`;
-        }
-      });
       res.json(Array.isArray(results) ? results : []);
     }
   );
 });
 
-// POST nuevo corte (con imagen y localización)
+// POST nuevo corte (con imagen en Cloudinary)
 router.post('/', upload.single('imagen'), (req, res) => {
   const { cuenta, medidor, fecha, localizacion } = req.body;
-  let imagen = req.file ? req.file.path : null;
+  let imagen = req.file ? req.file.path : null; // Multer-storage-cloudinary pone la URL pública aquí
   if (!cuenta || !medidor || !fecha) {
     return res.status(400).json({ error: 'Faltan datos' });
   }
@@ -87,78 +81,47 @@ router.post('/', upload.single('imagen'), (req, res) => {
   );
 });
 
-// PUT editar corte (actualiza imagen, elimina la anterior si existe)
+// PUT editar corte (actualiza imagen en Cloudinary si hay una nueva)
+// *Opcional: puedes guardar el public_id para borrar la imagen anterior en Cloudinary cuando edites/borras*
 router.put('/:id', upload.single('imagen'), (req, res) => {
   const { id } = req.params;
-  const { id_cuenta, id_medidor, fecha, localizacion } = req.body;
-  // 1. Consulta corte actual para posible imagen antigua
-  db.query('SELECT imagen FROM cortes WHERE id_cuenta=?', [id], (err, [corte]) => {
-    if (err) return res.status(500).json({ error: err.message });
-    if (!corte) return res.status(404).json({ error: "Corte no encontrado." });
+  const { id_medidor, fecha, localizacion } = req.body;
+  let imagen = req.file ? req.file.path : req.body.imagen || null;
 
-    let imagen = corte.imagen;
-    let nuevaImagenSubida = false;
-
-    // Si hay imagen nueva, borra la anterior y actualiza a la nueva
-    if (req.file) {
-      if (imagen && fs.existsSync(imagen)) {
-        try { fs.unlinkSync(imagen); } catch {}
+  db.query(
+    'UPDATE cortes SET id_medidor=?, fecha=?, localizacion=?, imagen=? WHERE id_cuenta=?',
+    [id_medidor, fecha, localizacion || null, imagen, id],
+    (err, result) => {
+      if (err) {
+        console.error('Error en PUT /cortes:', err);
+        return res.status(500).json({ error: err.message });
       }
-      imagen = req.file.path;
-      nuevaImagenSubida = true;
-    } else if (req.body.imagen === "") {
-      // Si se manda imagen vacía, elimina la imagen actual
-      if (imagen && fs.existsSync(imagen)) {
-        try { fs.unlinkSync(imagen); } catch {}
-      }
-      imagen = null;
+      res.json({ ok: true });
     }
-
-    db.query(
-      'UPDATE cortes SET id_medidor=?, fecha=?, localizacion=?, imagen=? WHERE id_cuenta=?',
-      [id_medidor, fecha, localizacion || null, imagen, id],
-      (err2, result) => {
-        if (err2) return res.status(500).json({ error: err2.message });
-        res.json({ ok: true, imagen, nuevaImagenSubida });
-      }
-    );
-  });
+  );
 });
 
-// DELETE eliminar corte por id_cuenta (borra imagen física)
+// DELETE eliminar corte por id_cuenta
 router.delete('/:id', (req, res) => {
   const { id } = req.params;
-  db.query('SELECT imagen FROM cortes WHERE id_cuenta=?', [id], (err, [corte]) => {
-    if (err) return res.status(500).json({ error: err.message });
-    if (!corte) return res.status(404).json({ error: "Corte no encontrado." });
-
-    // Eliminar física la imagen del disco si existe
-    if (corte.imagen) {
-      if (fs.existsSync(corte.imagen)) {
-        try { fs.unlinkSync(corte.imagen); } catch (e) { /* ignora error */ }
-      }
+  // Opcional: puedes consultar y borrar la imagen en Cloudinary usando public_id si lo guardas en la DB
+  db.query('DELETE FROM cortes WHERE id_cuenta=?', [id], (err, result) => {
+    if (err) {
+      console.error('Error en DELETE /cortes:', err);
+      return res.status(500).json({ error: err.message });
     }
-
-    db.query('DELETE FROM cortes WHERE id_cuenta=?', [id], (err2, result) => {
-      if (err2) return res.status(500).json({ error: err2.message });
-      res.json({ ok: true });
-    });
+    res.json({ ok: true });
   });
 });
 
-// DELETE eliminar TODOS los cortes (borra imágenes físicas)
+// DELETE eliminar TODOS los cortes
 router.delete('/', (req, res) => {
-  db.query('SELECT imagen FROM cortes', (err, results) => {
-    if (err) return res.status(500).json({ error: err.message });
-    results.forEach(corte => {
-      if (corte.imagen && fs.existsSync(corte.imagen)) {
-        try { fs.unlinkSync(corte.imagen); } catch (e) { /* ignora error */ }
-      }
-    });
-    db.query('DELETE FROM cortes', (err2, result) => {
-      if (err2) return res.status(500).json({ error: err2.message });
-      res.json({ ok: true, message: 'Todos los cortes eliminados.' });
-    });
+  db.query('DELETE FROM cortes', (err, result) => {
+    if (err) {
+      console.error('Error en DELETE /cortes (todos):', err);
+      return res.status(500).json({ error: err.message });
+    }
+    res.json({ ok: true, message: 'Todos los cortes eliminados.' });
   });
 });
 
