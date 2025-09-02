@@ -28,14 +28,10 @@ const upload = multer({ storage });
  */
 router.post("/", upload.single("imagen"), (req, res) => {
   const { cuenta, medidor, fecha, novedad, operador, observaciones } = req.body;
-  let imagenUrl = "";
+  let imagenUrl = req.file ? req.file.path : null; // Guarda la ruta física
 
   if (!cuenta || !medidor || !fecha || !novedad || !operador) {
     return res.status(400).json({ error: "Todos los campos son obligatorios." });
-  }
-
-  if (req.file) {
-    imagenUrl = `/uploads/incidencias/${req.file.filename}`;
   }
 
   db.query(
@@ -46,13 +42,14 @@ router.post("/", upload.single("imagen"), (req, res) => {
         console.error("Error al guardar incidencia:", err);
         return res.status(500).json({ error: err.message });
       }
-      res.status(201).json({ ok: true, imagenUrl });
+      res.status(201).json({ ok: true });
     }
   );
 });
 
 /**
  * GET: Listar incidencias (paginado opcional: ?pagina=1&limite=20)
+ * Devuelve imagenUrl como URL pública si existe.
  */
 router.get("/", (req, res) => {
   const pagina = parseInt(req.query.pagina) || 1;
@@ -69,6 +66,11 @@ router.get("/", (req, res) => {
         if (err) {
           return res.status(500).json({ error: err.message });
         }
+        results.forEach(inc => {
+          if (inc.imagenUrl) {
+            inc.imagenUrl = `${req.protocol}://${req.get('host')}/uploads/incidencias/${path.basename(inc.imagenUrl)}`;
+          }
+        });
         res.json({ total: totalResult[0].total, pagina, limite, incidencias: results });
       }
     );
@@ -77,6 +79,7 @@ router.get("/", (req, res) => {
 
 /**
  * GET: Buscar por cuenta o medidor (ejemplo: /api/incidencias/buscar?q=12345)
+ * Devuelve imagenUrl como URL pública si existe.
  */
 router.get("/buscar", (req, res) => {
   const q = (req.query.q || "").trim();
@@ -86,6 +89,11 @@ router.get("/buscar", (req, res) => {
     [`%${q}%`, `%${q}%`],
     (err, results) => {
       if (err) return res.status(500).json({ error: err.message });
+      results.forEach(inc => {
+        if (inc.imagenUrl) {
+          inc.imagenUrl = `${req.protocol}://${req.get('host')}/uploads/incidencias/${path.basename(inc.imagenUrl)}`;
+        }
+      });
       res.json(results);
     }
   );
@@ -108,10 +116,10 @@ router.put("/:id", upload.single("imagen"), (req, res) => {
 
     // Si hay imagen nueva, borra la anterior y actualiza a la nueva
     if (req.file) {
-      if (imagenUrl && fs.existsSync(path.join(__dirname, "..", imagenUrl))) {
-        try { fs.unlinkSync(path.join(__dirname, "..", imagenUrl)); } catch {}
+      if (imagenUrl && fs.existsSync(imagenUrl)) {
+        try { fs.unlinkSync(imagenUrl); } catch {}
       }
-      imagenUrl = `/uploads/incidencias/${req.file.filename}`;
+      imagenUrl = req.file.path;
       nuevaImagenSubida = true;
     }
 
@@ -137,9 +145,8 @@ router.delete("/:id", (req, res) => {
 
     // Eliminar física la imagen del disco si existe
     if (inc.imagenUrl) {
-      const imgPath = path.join(__dirname, "..", inc.imagenUrl);
-      if (fs.existsSync(imgPath)) {
-        try { fs.unlinkSync(imgPath); } catch (e) { /* ignora error */ }
+      if (fs.existsSync(inc.imagenUrl)) {
+        try { fs.unlinkSync(inc.imagenUrl); } catch (e) { /* ignora error */ }
       }
     }
 
