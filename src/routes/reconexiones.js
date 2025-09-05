@@ -104,17 +104,39 @@ router.get('/cortes-reconexiones', (req, res) => {
   );
 });
 
-// POST para insertar una reconexión
+// POST para insertar una reconexión con validación de duplicado en el mes
 router.post('/', (req, res) => {
-  const { id_cuenta, id_medidor, fecha } = req.body;
+  const { id_cuenta, id_medidor, fecha, forzar } = req.body;
   if (!id_cuenta || !id_medidor || !fecha)
     return res.status(400).json({ error: 'Datos incompletos' });
+
+  // Extraer año y mes de la fecha
+  const [year, month] = fecha.slice(0, 7).split('-');
+
+  // Buscar si ya existe una reconexión ese mes para esa cuenta y medidor
   db.query(
-    'INSERT INTO reconexiones (id_cuenta, id_medidor, fecha) VALUES (?, ?, ?)',
-    [id_cuenta, id_medidor, fecha],
-    (err, result) => {
+    `SELECT * FROM reconexiones WHERE id_cuenta = ? AND id_medidor = ? AND YEAR(fecha) = ? AND MONTH(fecha) = ?`,
+    [id_cuenta, id_medidor, year, month],
+    (err, rows) => {
       if (err) return res.status(500).json({ error: err.message });
-      res.json({ ok: true, id: result.insertId });
+
+      if (rows.length > 0 && !forzar) {
+        // Ya existe, pedir confirmación
+        return res.json({
+          confirm: true,
+          message: `Ya existe una reconexión para la cuenta ${id_cuenta} y medidor ${id_medidor} en el mes seleccionado. ¿Desea registrar otra?`
+        });
+      }
+
+      // Insertar normalmente
+      db.query(
+        'INSERT INTO reconexiones (id_cuenta, id_medidor, fecha) VALUES (?, ?, ?)',
+        [id_cuenta, id_medidor, fecha],
+        (err2, result) => {
+          if (err2) return res.status(500).json({ error: err2.message });
+          res.json({ ok: true, id: result.insertId });
+        }
+      );
     }
   );
 });
