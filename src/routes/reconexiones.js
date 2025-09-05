@@ -1,32 +1,11 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../config/db');
-const { v2: cloudinary } = require('cloudinary');
-const { CloudinaryStorage } = require('multer-storage-cloudinary');
-const multer = require('multer');
-
-// Configuración Cloudinary
-cloudinary.config({
-  cloud_name: 'dongnlepy',
-  api_key: '919336698616996',
-  api_secret: 'k9gKVFar7akoyt2rJryefelufR8'
-});
-
-// Configuración Multer para guardar imágenes en Cloudinary
-const storage = new CloudinaryStorage({
-  cloudinary,
-  params: {
-    folder: 'siscorte/reconexiones',
-    allowed_formats: ['jpg', 'jpeg', 'png', 'webp'],
-    public_id: (req, file) => Date.now() + '-' + file.originalname.replace(/\s/g, '_')
-  }
-});
-const upload = multer({ storage });
 
 // GET todas las reconexiones (con filtros opcionales)
 router.get('/', (req, res) => {
   const { fecha, start, end } = req.query;
-  let sql = 'SELECT id_reconexion, id_cuenta, id_medidor, fecha, localizacion, imagen, imagen_public_id FROM reconexiones';
+  let sql = 'SELECT id_reconexion, id_cuenta, id_medidor, fecha FROM reconexiones';
   let params = [];
   if (fecha) {
     sql += ' WHERE fecha = ? ORDER BY id_cuenta';
@@ -48,7 +27,7 @@ router.get('/', (req, res) => {
 router.get('/cuenta/:id', (req, res) => {
   const { id } = req.params;
   db.query(
-    'SELECT id_reconexion, id_cuenta, id_medidor, fecha, localizacion, imagen, imagen_public_id FROM reconexiones WHERE id_cuenta = ? ORDER BY fecha DESC',
+    'SELECT id_reconexion, id_cuenta, id_medidor, fecha FROM reconexiones WHERE id_cuenta = ? ORDER BY fecha DESC',
     [id],
     (err, results) => {
       if (err) {
@@ -61,10 +40,8 @@ router.get('/cuenta/:id', (req, res) => {
 });
 
 // POST nueva reconexión (permite varios por mes, pero valida duplicado y permite confirmar)
-router.post('/', upload.single('imagen'), (req, res) => {
-  const { id_cuenta, id_medidor, fecha, localizacion, forzar } = req.body;
-  let imagen = req.file ? req.file.path : null;
-  let imagen_public_id = req.file ? req.file.filename : null;
+router.post('/', (req, res) => {
+  const { id_cuenta, id_medidor, fecha, forzar } = req.body;
 
   if (!id_cuenta || !id_medidor || !fecha) {
     return res.status(400).json({ error: 'Faltan datos' });
@@ -90,90 +67,49 @@ router.post('/', upload.single('imagen'), (req, res) => {
         });
       }
       db.query(
-        'INSERT INTO reconexiones (id_cuenta, id_medidor, fecha, localizacion, imagen, imagen_public_id) VALUES (?, ?, ?, ?, ?, ?)',
-        [id_cuenta, id_medidor, fecha, localizacion || null, imagen, imagen_public_id],
+        'INSERT INTO reconexiones (id_cuenta, id_medidor, fecha) VALUES (?, ?, ?)',
+        [id_cuenta, id_medidor, fecha],
         (err2, result2) => {
           if (err2) {
             console.error('Error en POST /reconexiones:', err2);
             return res.status(500).json({ error: err2.message });
           }
-          res.status(201).json({ ok: true, imagen });
+          res.status(201).json({ ok: true });
         }
       );
     }
   );
 });
 
-// PUT editar reconexión (actualiza imagen en Cloudinary si hay una nueva)
-router.put('/:id', upload.single('imagen'), (req, res) => {
+// PUT editar reconexión
+router.put('/:id', (req, res) => {
   const { id } = req.params;
-  const { id_medidor, fecha, localizacion } = req.body;
+  const { id_medidor, fecha } = req.body;
 
-  db.query('SELECT imagen_public_id FROM reconexiones WHERE id_reconexion=?', [id], async (err, result) => {
-    if (err) return res.status(500).json({ error: err.message });
-
-    let imagen = req.file ? req.file.path : req.body.imagen || null;
-    let imagen_public_id = req.file ? req.file.filename : req.body.imagen_public_id || null;
-
-    if (req.file && result.length > 0 && result[0].imagen_public_id) {
-      try {
-        await cloudinary.uploader.destroy(result[0].imagen_public_id);
-      } catch (e) {
-        console.error('Error al borrar imagen anterior en Cloudinary:', e);
-      }
-    }
-
-    db.query(
-      'UPDATE reconexiones SET id_medidor=?, fecha=?, localizacion=?, imagen=?, imagen_public_id=? WHERE id_reconexion=?',
-      [id_medidor, fecha, localizacion || null, imagen, imagen_public_id, id],
-      (err2, result2) => {
-        if (err2) return res.status(500).json({ error: err2.message });
-        res.json({ ok: true, imagen });
-      }
-    );
-  });
-});
-
-// DELETE eliminar reconexión por id_reconexion (borra imagen Cloudinary si existe)
-router.delete('/:id', (req, res) => {
-  const { id } = req.params;
-  db.query('SELECT imagen_public_id FROM reconexiones WHERE id_reconexion=?', [id], async (err, result) => {
-    if (err) return res.status(500).json({ error: err.message });
-
-    if (result.length > 0 && result[0].imagen_public_id) {
-      try {
-        await cloudinary.uploader.destroy(result[0].imagen_public_id);
-      } catch (e) {
-        console.error('Error al borrar imagen en Cloudinary:', e);
-      }
-    }
-
-    db.query('DELETE FROM reconexiones WHERE id_reconexion=?', [id], (err2, result2) => {
+  db.query(
+    'UPDATE reconexiones SET id_medidor=?, fecha=? WHERE id_reconexion=?',
+    [id_medidor, fecha, id],
+    (err2, result2) => {
       if (err2) return res.status(500).json({ error: err2.message });
       res.json({ ok: true });
-    });
+    }
+  );
+});
+
+// DELETE eliminar reconexión por id_reconexion
+router.delete('/:id', (req, res) => {
+  const { id } = req.params;
+  db.query('DELETE FROM reconexiones WHERE id_reconexion=?', [id], (err2, result2) => {
+    if (err2) return res.status(500).json({ error: err2.message });
+    res.json({ ok: true });
   });
 });
 
-// DELETE eliminar TODOS las reconexiones (borra imágenes Cloudinary)
+// DELETE eliminar TODOS las reconexiones
 router.delete('/', (req, res) => {
-  db.query('SELECT imagen_public_id FROM reconexiones', async (err, results) => {
-    if (err) return res.status(500).json({ error: err.message });
-
-    for (const rec of results) {
-      if (rec.imagen_public_id) {
-        try {
-          await cloudinary.uploader.destroy(rec.imagen_public_id);
-        } catch (e) {
-          console.error('Error al borrar imagen en Cloudinary:', e);
-        }
-      }
-    }
-
-    db.query('DELETE FROM reconexiones', (err2, result2) => {
-      if (err2) return res.status(500).json({ error: err2.message });
-      res.json({ ok: true, message: 'Todas las reconexiones e imágenes eliminadas.' });
-    });
+  db.query('DELETE FROM reconexiones', (err2, result2) => {
+    if (err2) return res.status(500).json({ error: err2.message });
+    res.json({ ok: true, message: 'Todas las reconexiones eliminadas.' });
   });
 });
 
