@@ -5,11 +5,11 @@ const { v2: cloudinary } = require('cloudinary');
 const { CloudinaryStorage } = require('multer-storage-cloudinary');
 const multer = require('multer');
 
-// Configuración Cloudinary (pon tus credenciales reales)
+// Configuración Cloudinary
 cloudinary.config({
-  cloud_name: 'dongnlepy',            // <--- tu cloud_name
-  api_key: '919336698616996',         // <--- tu api_key
-  api_secret: 'k9gKVFar7akoyt2rJryefelufR8' // <--- tu api_secret
+  cloud_name: 'dongnlepy',
+  api_key: '919336698616996',
+  api_secret: 'k9gKVFar7akoyt2rJryefelufR8'
 });
 
 // Configuración de Multer para guardar imágenes en Cloudinary
@@ -26,7 +26,7 @@ const upload = multer({ storage });
 // GET todos los cortes (con filtros opcionales)
 router.get('/', (req, res) => {
   const { fecha, start, end } = req.query;
-  let sql = 'SELECT id_cuenta, id_medidor, fecha, localizacion, imagen, imagen_public_id FROM cortes';
+  let sql = 'SELECT id_cortes, id_cuenta, id_medidor, fecha, herramienta, localizacion, imagen, imagen_public_id FROM cortes';
   let params = [];
   if (fecha) {
     sql += ' WHERE fecha = ? ORDER BY id_cuenta';
@@ -40,7 +40,6 @@ router.get('/', (req, res) => {
       console.error('Error en GET /cortes:', err);
       return res.status(500).json({ error: err.message });
     }
-    // Las URLs de imagen ya serán públicas de Cloudinary
     res.json(Array.isArray(results) ? results : []);
   });
 });
@@ -49,7 +48,7 @@ router.get('/', (req, res) => {
 router.get('/cuenta/:id', (req, res) => {
   const { id } = req.params;
   db.query(
-    'SELECT id_cuenta, id_medidor, fecha, localizacion, imagen, imagen_public_id FROM cortes WHERE id_cuenta = ? ORDER BY fecha DESC',
+    'SELECT id_cortes, id_cuenta, id_medidor, fecha, herramienta, localizacion, imagen, imagen_public_id FROM cortes WHERE id_cuenta = ? ORDER BY fecha DESC',
     [id],
     (err, results) => {
       if (err) {
@@ -61,23 +60,49 @@ router.get('/cuenta/:id', (req, res) => {
   );
 });
 
-// POST nuevo corte (con imagen en Cloudinary)
+// POST nuevo corte (permite hasta 2 cortes por mes por cuenta y medidor, con confirmación)
 router.post('/', upload.single('imagen'), (req, res) => {
-  const { cuenta, medidor, fecha, localizacion } = req.body;
-  let imagen = req.file ? req.file.path : null; // URL pública Cloudinary
-  let imagen_public_id = req.file ? req.file.filename : null; // Public ID de Cloudinary (para borrar después)
-  if (!cuenta || !medidor || !fecha) {
+  const { cuenta, medidor, fecha, localizacion, herramienta, forzar } = req.body;
+  let imagen = req.file ? req.file.path : null;
+  let imagen_public_id = req.file ? req.file.filename : null;
+
+  if (!cuenta || !medidor || !fecha || !herramienta) {
     return res.status(400).json({ error: 'Faltan datos' });
   }
+
+  // Validar cuántos cortes existen en el mes para esa cuenta y medidor
   db.query(
-    'INSERT INTO cortes (id_cuenta, id_medidor, fecha, localizacion, imagen, imagen_public_id) VALUES (?, ?, ?, ?, ?, ?)',
-    [cuenta, medidor, fecha, localizacion || null, imagen, imagen_public_id],
+    `SELECT COUNT(*) AS total FROM cortes
+     WHERE id_cuenta = ? AND id_medidor = ?
+     AND YEAR(fecha) = YEAR(?) AND MONTH(fecha) = MONTH(?)`,
+    [cuenta, medidor, fecha, fecha],
     (err, result) => {
       if (err) {
-        console.error('Error en POST /cortes:', err);
+        console.error('Error en validación de mes:', err);
         return res.status(500).json({ error: err.message });
       }
-      res.status(201).json({ ok: true, imagen });
+      const total = result[0].total;
+      if (total >= 2) {
+        return res.status(400).json({ error: 'Ya existen dos cortes para esta cuenta y medidor en el mes.' });
+      }
+      if (total === 1 && !forzar) {
+        // Ya hay un corte, pedir confirmación
+        return res.status(202).json({
+          confirm: true,
+          message: 'Ya existe un corte en el mes para esta cuenta y medidor. ¿Desea registrar un segundo corte este mes?'
+        });
+      }
+      db.query(
+        'INSERT INTO cortes (id_cuenta, id_medidor, fecha, herramienta, localizacion, imagen, imagen_public_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        [cuenta, medidor, fecha, herramienta, localizacion || null, imagen, imagen_public_id],
+        (err2, result2) => {
+          if (err2) {
+            console.error('Error en POST /cortes:', err2);
+            return res.status(500).json({ error: err2.message });
+          }
+          res.status(201).json({ ok: true, imagen });
+        }
+      );
     }
   );
 });
@@ -85,16 +110,14 @@ router.post('/', upload.single('imagen'), (req, res) => {
 // PUT editar corte (actualiza imagen en Cloudinary si hay una nueva)
 router.put('/:id', upload.single('imagen'), (req, res) => {
   const { id } = req.params;
-  const { id_medidor, fecha, localizacion } = req.body;
+  const { id_medidor, fecha, herramienta, localizacion } = req.body;
 
-  // Buscar el corte actual para borrar la imagen anterior si hay nueva
-  db.query('SELECT imagen_public_id FROM cortes WHERE id_cuenta=?', [id], async (err, result) => {
+  db.query('SELECT imagen_public_id FROM cortes WHERE id_cortes=?', [id], async (err, result) => {
     if (err) return res.status(500).json({ error: err.message });
 
     let imagen = req.file ? req.file.path : req.body.imagen || null;
     let imagen_public_id = req.file ? req.file.filename : req.body.imagen_public_id || null;
 
-    // Si hay imagen nueva y existe una anterior, la borramos de Cloudinary
     if (req.file && result.length > 0 && result[0].imagen_public_id) {
       try {
         await cloudinary.uploader.destroy(result[0].imagen_public_id);
@@ -104,8 +127,8 @@ router.put('/:id', upload.single('imagen'), (req, res) => {
     }
 
     db.query(
-      'UPDATE cortes SET id_medidor=?, fecha=?, localizacion=?, imagen=?, imagen_public_id=? WHERE id_cuenta=?',
-      [id_medidor, fecha, localizacion || null, imagen, imagen_public_id, id],
+      'UPDATE cortes SET id_medidor=?, fecha=?, herramienta=?, localizacion=?, imagen=?, imagen_public_id=? WHERE id_cortes=?',
+      [id_medidor, fecha, herramienta, localizacion || null, imagen, imagen_public_id, id],
       (err2, result2) => {
         if (err2) return res.status(500).json({ error: err2.message });
         res.json({ ok: true, imagen });
@@ -114,11 +137,10 @@ router.put('/:id', upload.single('imagen'), (req, res) => {
   });
 });
 
-// DELETE eliminar corte por id_cuenta (borra imagen Cloudinary si existe)
+// DELETE eliminar corte por id_cortes (borra imagen Cloudinary si existe)
 router.delete('/:id', (req, res) => {
   const { id } = req.params;
-  // Buscar imagen_public_id para borrar en Cloudinary
-  db.query('SELECT imagen_public_id FROM cortes WHERE id_cuenta=?', [id], async (err, result) => {
+  db.query('SELECT imagen_public_id FROM cortes WHERE id_cortes=?', [id], async (err, result) => {
     if (err) return res.status(500).json({ error: err.message });
 
     if (result.length > 0 && result[0].imagen_public_id) {
@@ -129,7 +151,7 @@ router.delete('/:id', (req, res) => {
       }
     }
 
-    db.query('DELETE FROM cortes WHERE id_cuenta=?', [id], (err2, result2) => {
+    db.query('DELETE FROM cortes WHERE id_cortes=?', [id], (err2, result2) => {
       if (err2) return res.status(500).json({ error: err2.message });
       res.json({ ok: true });
     });
@@ -141,7 +163,6 @@ router.delete('/', (req, res) => {
   db.query('SELECT imagen_public_id FROM cortes', async (err, results) => {
     if (err) return res.status(500).json({ error: err.message });
 
-    // Borrar todas las imágenes de Cloudinary
     for (const corte of results) {
       if (corte.imagen_public_id) {
         try {
