@@ -3,12 +3,35 @@ const router = express.Router();
 const db = require('../config/db');
 const jwt = require('jsonwebtoken');
 
+// Helper para intentar N veces una consulta
+function retryQuery(query, params, maxAttempts = 3) {
+  return new Promise((resolve, reject) => {
+    let attempts = 0;
+    function attempt() {
+      db.query(query, params, (err, results) => {
+        if (!err) return resolve(results);
+        attempts++;
+        // Solo reintentar errores de conexión y mientras no se pase el límite
+        const isConnectionError = err.code === 'PROTOCOL_CONNECTION_LOST' ||
+                                  err.code === 'ECONNREFUSED' ||
+                                  err.code === 'PROTOCOL_ENQUEUE_AFTER_FATAL_ERROR';
+        if (attempts < maxAttempts && isConnectionError) {
+          setTimeout(attempt, 200); // espera 200ms antes de reintentar
+        } else {
+          reject(err);
+        }
+      });
+    }
+    attempt();
+  });
+}
+
 // Login: recibe username y password SIN encriptar
-router.post('/login', (req, res) => {
+router.post('/login', async (req, res) => {
   const { username, password } = req.body;
 
-  db.query('SELECT * FROM users WHERE username = ?', [username], (err, results) => {
-    if (err) return res.status(500).json({ success: false, message: "Error en el servidor" });
+  try {
+    const results = await retryQuery('SELECT * FROM users WHERE username = ?', [username]);
     if (results.length === 0) return res.status(401).json({ success: false, message: "Usuario no existe" });
 
     const user = results[0];
@@ -29,7 +52,9 @@ router.post('/login', (req, res) => {
       token,
       user: { id: user.id, username: user.username, name: user.name, role: user.role }
     });
-  });
+  } catch (err) {
+    res.status(500).json({ success: false, message: "Error en el servidor: " + err.message });
+  }
 });
 
 module.exports = router;
