@@ -3,20 +3,19 @@ const router = express.Router();
 const db = require('../config/db');
 const jwt = require('jsonwebtoken');
 
-// Helper para intentar N veces una consulta
-function retryQuery(query, params, maxAttempts = 3) {
+// Helper para intentar infinitamente una consulta si hay error de conexión
+function retryQuery(query, params) {
   return new Promise((resolve, reject) => {
-    let attempts = 0;
     function attempt() {
       db.query(query, params, (err, results) => {
         if (!err) return resolve(results);
-        attempts++;
-        // Solo reintentar errores de conexión y mientras no se pase el límite
+        // Solo reintentar errores de conexión
         const isConnectionError = err.code === 'PROTOCOL_CONNECTION_LOST' ||
                                   err.code === 'ECONNREFUSED' ||
                                   err.code === 'PROTOCOL_ENQUEUE_AFTER_FATAL_ERROR';
-        if (attempts < maxAttempts && isConnectionError) {
-          setTimeout(attempt, 200); // espera 200ms antes de reintentar
+        if (isConnectionError) {
+          console.error(`Error de conexión a la base de datos (${err.code}). Reintentando en 2 segundos...`);
+          setTimeout(attempt, 2000); // espera 2 segundos antes de reintentar
         } else {
           reject(err);
         }
